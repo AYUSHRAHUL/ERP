@@ -7,6 +7,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ===== CORE USER MANAGEMENT =====
 model User {
   id          String   @id @default(cuid())
   email       String   @unique
@@ -16,11 +17,21 @@ model User {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   
-  // Role-specific relations
+  // Role-specific profiles
   admin       Admin?
   faculty     Faculty?
   student     Student?
   staff       Staff?
+  
+  // Messaging relations
+  participants         ConversationParticipant[]
+  sentMessages         Message[]
+  messageReadReceipts  MessageReadReceipt[]
+  messageReactions     MessageReaction[]
+  onlineStatus         OnlineStatus?
+  
+  // Payment relations
+  paymentTransactions  PaymentTransaction[]
   
   @@map("users")
 }
@@ -44,13 +55,15 @@ model Department {
   description String?
   createdAt   DateTime  @default(now())
   
-  courses     Course[]
-  faculty     Faculty[]
-  students    Student[]
+  courses       Course[]
+  faculty       Faculty[]
+  students      Student[]
+  feeStructures FeeStructure[]
   
   @@map("departments")
 }
 
+// ===== ACADEMIC STRUCTURE =====
 model Course {
   id           String @id @default(cuid())
   name         String
@@ -62,6 +75,7 @@ model Course {
   department   Department @relation(fields: [departmentId], references: [id])
   subjects     Subject[]
   enrollments  Enrollment[]
+  lmsCourse    LMSCourse?
   
   @@map("courses")
 }
@@ -77,6 +91,9 @@ model Subject {
   allocations SubjectAllocation[]
   attendance  Attendance[]
   marks       Mark[]
+  timetables  Timetable[]
+  exams       Exam[]
+  forums      DiscussionForum[]
   
   @@map("subjects")
 }
@@ -98,6 +115,8 @@ model Faculty {
   allocations  SubjectAllocation[]
   attendance   Attendance[]
   marks        Mark[]
+  timetables   Timetable[]
+  exams        Exam[]
   
   @@map("faculty")
 }
@@ -119,11 +138,17 @@ model Student {
   semester       Int
   admissionYear  Int
   
-  department     Department @relation(fields: [departmentId], references: [id])
-  enrollments    Enrollment[]
-  attendance     Attendance[]
-  marks          Mark[]
-  feePayments    FeePayment[]
+  department            Department @relation(fields: [departmentId], references: [id])
+  enrollments           Enrollment[]
+  attendance            Attendance[]
+  marks                 Mark[]
+  certificates          Certificate[]
+  examSubmissions       ExamSubmission[]
+  lmsEnrollments        LMSEnrollment[]
+  lessonProgress        LessonProgress[]
+  assignmentSubmissions AssignmentSubmission[]
+  invoices              FeeInvoice[]
+  paymentReminders      PaymentReminder[]
   
   @@map("students")
 }
@@ -142,6 +167,7 @@ model Staff {
   @@map("staff")
 }
 
+// ===== ACADEMIC OPERATIONS =====
 model Enrollment {
   id        String   @id @default(cuid())
   studentId String
@@ -207,38 +233,673 @@ model Mark {
   @@map("marks")
 }
 
+// ===== SCHEDULING & RESOURCES =====
+model Timetable {
+  id        String @id @default(cuid())
+  subjectId String
+  facultyId String
+  roomId    String?
+  dayOfWeek String
+  startTime String
+  endTime   String
+  semester  Int
+  year      Int
+  batch     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  subject Subject @relation(fields: [subjectId], references: [id])
+  faculty Faculty @relation(fields: [facultyId], references: [id])
+  room    Room?   @relation(fields: [roomId], references: [id])
+  
+  @@unique([subjectId, dayOfWeek, startTime, semester, year])
+  @@map("timetables")
+}
+
+model Room {
+  id         String @id @default(cuid())
+  number     String @unique
+  name       String?
+  capacity   Int
+  type       RoomType
+  building   String?
+  floor      String?
+  facilities String?
+  isActive   Boolean @default(true)
+  
+  timetables Timetable[]
+  
+  @@map("rooms")
+}
+
+// ===== DOCUMENT MANAGEMENT =====
+model Document {
+  id          String      @id @default(cuid())
+  title       String
+  fileName    String
+  fileUrl     String
+  fileSize    Int?
+  mimeType    String
+  docType     DocumentType
+  uploadedBy  String
+  uploadedFor String?
+  isPublic    Boolean     @default(false)
+  isApproved  Boolean     @default(false)
+  approvedBy  String?
+  approvedAt  DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  
+  downloads   DocumentDownload[]
+  
+  @@map("documents")
+}
+
+model DocumentDownload {
+  id         String   @id @default(cuid())
+  documentId String
+  userId     String
+  downloadedAt DateTime @default(now())
+  
+  document   Document @relation(fields: [documentId], references: [id])
+  
+  @@map("document_downloads")
+}
+
+model Certificate {
+  id          String      @id @default(cuid())
+  studentId   String
+  type        CertificateType
+  title       String
+  description String?
+  issueDate   DateTime
+  certificateNumber String @unique
+  issuedBy    String
+  templateId  String?
+  pdfUrl      String?
+  isActive    Boolean     @default(true)
+  
+  student     Student     @relation(fields: [studentId], references: [id])
+  
+  @@map("certificates")
+}
+
+// ===== EXAMINATION SYSTEM =====
+model Exam {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  subjectId   String
+  facultyId   String
+  duration    Int      // in minutes
+  totalMarks  Int
+  passingMarks Int
+  startDate   DateTime
+  endDate     DateTime
+  isActive    Boolean  @default(true)
+  instructions String? @db.Text
+  shuffleQuestions Boolean @default(false)
+  showResults Boolean  @default(false)
+  allowReview Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  subject     Subject  @relation(fields: [subjectId], references: [id])
+  faculty     Faculty  @relation(fields: [facultyId], references: [id])
+  questions   ExamQuestion[]
+  submissions ExamSubmission[]
+  
+  @@map("exams")
+}
+
+model Question {
+  id          String   @id @default(cuid())
+  question    String   @db.Text
+  type        QuestionType
+  marks       Int
+  explanation String?  @db.Text
+  difficulty  DifficultyLevel @default(MEDIUM)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  options     QuestionOption[]
+  examQuestions ExamQuestion[]
+  answers     SubmissionAnswer[]
+  
+  @@map("questions")
+}
+
+model QuestionOption {
+  id         String  @id @default(cuid())
+  questionId String
+  option     String
+  isCorrect  Boolean @default(false)
+  
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  
+  @@map("question_options")
+}
+
+model ExamQuestion {
+  id         String @id @default(cuid())
+  examId     String
+  questionId String
+  order      Int
+  
+  exam       Exam     @relation(fields: [examId], references: [id], onDelete: Cascade)
+  question   Question @relation(fields: [questionId], references: [id])
+  
+  @@unique([examId, questionId])
+  @@map("exam_questions")
+}
+
+model ExamSubmission {
+  id          String   @id @default(cuid())
+  examId      String
+  studentId   String
+  startTime   DateTime
+  endTime     DateTime?
+  totalMarks  Int?
+  obtainedMarks Int?
+  status      ExamSubmissionStatus @default(IN_PROGRESS)
+  isAutoSubmitted Boolean @default(false)
+  createdAt   DateTime @default(now())
+  
+  exam        Exam     @relation(fields: [examId], references: [id])
+  student     Student  @relation(fields: [studentId], references: [id])
+  answers     SubmissionAnswer[]
+  
+  @@unique([examId, studentId])
+  @@map("exam_submissions")
+}
+
+model SubmissionAnswer {
+  id           String  @id @default(cuid())
+  submissionId String
+  questionId   String
+  answer       String? @db.Text
+  selectedOptions String? // JSON array for multiple choice
+  isCorrect    Boolean?
+  marksAwarded Int?
+  
+  submission   ExamSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  question     Question       @relation(fields: [questionId], references: [id])
+  
+  @@unique([submissionId, questionId])
+  @@map("submission_answers")
+}
+
+// ===== LEARNING MANAGEMENT SYSTEM =====
+model LMSCourse {
+  id          String   @id @default(cuid())
+  courseId    String   @unique
+  title       String
+  description String?  @db.Text
+  coverImage  String?
+  isPublished Boolean  @default(false)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  course      Course   @relation(fields: [courseId], references: [id])
+  modules     LMSModule[]
+  enrollments LMSEnrollment[]
+  announcements LMSAnnouncement[]
+  
+  @@map("lms_courses")
+}
+
+model LMSModule {
+  id          String   @id @default(cuid())
+  lmsCourseId String
+  title       String
+  description String?  @db.Text
+  order       Int
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  
+  lmsCourse   LMSCourse @relation(fields: [lmsCourseId], references: [id], onDelete: Cascade)
+  lessons     LMSLesson[]
+  assignments LMSAssignment[]
+  
+  @@map("lms_modules")
+}
+
+model LMSLesson {
+  id          String     @id @default(cuid())
+  moduleId    String
+  title       String
+  content     String?    @db.Text
+  type        LessonType
+  videoUrl    String?
+  documentUrl String?
+  duration    Int?       // in minutes
+  order       Int
+  isPublished Boolean    @default(false)
+  createdAt   DateTime   @default(now())
+  
+  module      LMSModule  @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  progress    LessonProgress[]
+  
+  @@map("lms_lessons")
+}
+
+model LMSAssignment {
+  id          String   @id @default(cuid())
+  moduleId    String
+  title       String
+  description String   @db.Text
+  instructions String? @db.Text
+  dueDate     DateTime
+  maxPoints   Int
+  allowLateSubmission Boolean @default(false)
+  isPublished Boolean @default(false)
+  createdAt   DateTime @default(now())
+  
+  module      LMSModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  submissions AssignmentSubmission[]
+  
+  @@map("lms_assignments")
+}
+
+model AssignmentSubmission {
+  id           String   @id @default(cuid())
+  assignmentId String
+  studentId    String
+  content      String?  @db.Text
+  fileUrl      String?
+  submittedAt  DateTime @default(now())
+  grade        Int?
+  feedback     String?  @db.Text
+  status       AssignmentSubmissionStatus @default(SUBMITTED)
+  
+  assignment   LMSAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  student      Student       @relation(fields: [studentId], references: [id])
+  
+  @@unique([assignmentId, studentId])
+  @@map("assignment_submissions")
+}
+
+model LMSEnrollment {
+  id          String   @id @default(cuid())
+  lmsCourseId String
+  studentId   String
+  enrolledAt  DateTime @default(now())
+  completedAt DateTime?
+  progress    Float    @default(0) // percentage
+  
+  lmsCourse   LMSCourse @relation(fields: [lmsCourseId], references: [id])
+  student     Student   @relation(fields: [studentId], references: [id])
+  
+  @@unique([lmsCourseId, studentId])
+  @@map("lms_enrollments")
+}
+
+model LessonProgress {
+  id         String   @id @default(cuid())
+  lessonId   String
+  studentId  String
+  isCompleted Boolean @default(false)
+  watchTime  Int?     // in seconds
+  completedAt DateTime?
+  
+  lesson     LMSLesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  student    Student   @relation(fields: [studentId], references: [id])
+  
+  @@unique([lessonId, studentId])
+  @@map("lesson_progress")
+}
+
+model LMSAnnouncement {
+  id          String   @id @default(cuid())
+  lmsCourseId String
+  title       String
+  content     String   @db.Text
+  isImportant Boolean  @default(false)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  
+  lmsCourse   LMSCourse @relation(fields: [lmsCourseId], references: [id], onDelete: Cascade)
+  
+  @@map("lms_announcements")
+}
+
+model DiscussionForum {
+  id          String   @id @default(cuid())
+  subjectId   String
+  title       String
+  description String?  @db.Text
+  createdBy   String
+  createdAt   DateTime @default(now())
+  
+  subject     Subject  @relation(fields: [subjectId], references: [id])
+  posts       ForumPost[]
+  
+  @@map("discussion_forums")
+}
+
+model ForumPost {
+  id          String   @id @default(cuid())
+  forumId     String
+  parentId    String?  // for replies
+  title       String?
+  content     String   @db.Text
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  forum       DiscussionForum @relation(fields: [forumId], references: [id], onDelete: Cascade)
+  parent      ForumPost?      @relation("PostReplies", fields: [parentId], references: [id])
+  replies     ForumPost[]     @relation("PostReplies")
+  
+  @@map("forum_posts")
+}
+
+// ===== MESSAGING SYSTEM =====
+model Conversation {
+  id          String   @id @default(cuid())
+  name        String?  // Optional group name
+  type        ConversationType @default(DIRECT)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  lastMessageAt DateTime?
+  
+  participants ConversationParticipant[]
+  messages     Message[]
+  
+  @@map("conversations")
+}
+
+model ConversationParticipant {
+  id             String   @id @default(cuid())
+  conversationId String
+  userId         String
+  joinedAt       DateTime @default(now())
+  leftAt         DateTime?
+  role           ParticipantRole @default(MEMBER)
+  isActive       Boolean  @default(true)
+  lastSeenAt     DateTime?
+  
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id])
+  
+  @@unique([conversationId, userId])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  senderId       String
+  content        String   @db.Text
+  messageType    MessageType @default(TEXT)
+  fileUrl        String?
+  fileName       String?
+  fileSize       Int?
+  isEdited       Boolean  @default(false)
+  editedAt       DateTime?
+  replyToId      String?  // For message replies
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User         @relation(fields: [senderId], references: [id])
+  replyTo        Message?     @relation("MessageReplies", fields: [replyToId], references: [id])
+  replies        Message[]    @relation("MessageReplies")
+  readReceipts   MessageReadReceipt[]
+  reactions      MessageReaction[]
+  
+  @@map("messages")
+}
+
+model MessageReadReceipt {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  readAt    DateTime @default(now())
+  
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id])
+  
+  @@unique([messageId, userId])
+  @@map("message_read_receipts")
+}
+
+model MessageReaction {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  emoji     String   // Store emoji as string
+  createdAt DateTime @default(now())
+  
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id])
+  
+  @@unique([messageId, userId, emoji])
+  @@map("message_reactions")
+}
+
+model OnlineStatus {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  isOnline     Boolean  @default(false)
+  lastSeenAt   DateTime @default(now())
+  status       UserStatus @default(AVAILABLE)
+  statusMessage String?
+  
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("online_status")
+}
+
+// ===== REPORT SYSTEM =====
+model ReportTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  type        ReportType
+  category    ReportCategory
+  template    String   @db.LongText // HTML/JSON template
+  parameters  String?  @db.Text // JSON schema for parameters
+  isActive    Boolean  @default(true)
+  isSystem    Boolean  @default(false) // System templates cannot be deleted
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  reports     Report[]
+  schedules   ReportSchedule[]
+  
+  @@map("report_templates")
+}
+
+model Report {
+  id         String   @id @default(cuid())
+  templateId String
+  title      String
+  parameters String?  @db.Text // JSON parameters used for generation
+  filePath   String?  // Path to generated file
+  fileUrl    String?  // URL to access the file
+  status     ReportStatus @default(PENDING)
+  error      String?  @db.Text
+  generatedBy String
+  generatedFor String? // Student/Faculty ID if report is specific
+  createdAt  DateTime @default(now())
+  completedAt DateTime?
+  
+  template     ReportTemplate @relation(fields: [templateId], references: [id])
+  accessGrants ReportAccess[]
+  
+  @@map("reports")
+}
+
+model ReportSchedule {
+  id         String   @id @default(cuid())
+  templateId String
+  name       String
+  parameters String?  @db.Text // JSON parameters
+  frequency  ScheduleFrequency
+  nextRun    DateTime
+  lastRun    DateTime?
+  isActive   Boolean  @default(true)
+  createdBy  String
+  createdAt  DateTime @default(now())
+  
+  template   ReportTemplate @relation(fields: [templateId], references: [id])
+  
+  @@map("report_schedules")
+}
+
+model ReportAccess {
+  id       String @id @default(cuid())
+  reportId String
+  userId   String
+  canView  Boolean @default(true)
+  canDownload Boolean @default(false)
+  grantedBy String
+  grantedAt DateTime @default(now())
+  
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  
+  @@unique([reportId, userId])
+  @@map("report_access")
+}
+
+// ===== PAYMENT SYSTEM =====
+model PaymentGateway {
+  id          String   @id @default(cuid())
+  name        String   // Stripe, Razorpay, PayU, etc.
+  provider    String   
+  isActive    Boolean  @default(true)
+  isDefault   Boolean  @default(false)
+  config      String   @db.Text // JSON config (API keys, etc.)
+  supportedMethods String @db.Text // JSON array of supported methods
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  transactions PaymentTransaction[]
+  
+  @@map("payment_gateways")
+}
+
+model PaymentTransaction {
+  id                String   @id @default(cuid())
+  transactionId     String   @unique // Gateway transaction ID
+  orderId           String   @unique // Internal order ID
+  amount            Decimal  @db.Decimal(10,2)
+  currency          String   @default("INR")
+  status            TransactionStatus @default(PENDING)
+  paymentMethod     PaymentMethodType
+  gatewayId         String
+  userId            String
+  description       String?
+  metadata          String?  @db.Text // JSON metadata
+  gatewayResponse   String?  @db.Text // Gateway response
+  failureReason     String?
+  refundAmount      Decimal? @db.Decimal(10,2)
+  refundedAt        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  gateway           PaymentGateway @relation(fields: [gatewayId], references: [id])
+  user              User           @relation(fields: [userId], references: [id])
+  feePayments       FeePayment[]
+  webhookEvents     PaymentWebhook[]
+  
+  @@map("payment_transactions")
+}
+
+model PaymentWebhook {
+  id            String   @id @default(cuid())
+  transactionId String?
+  gatewayId     String
+  event         String   // payment.captured, payment.failed, etc.
+  payload       String   @db.LongText // Full webhook payload
+  processed     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  
+  transaction   PaymentTransaction? @relation(fields: [transactionId], references: [id])
+  
+  @@map("payment_webhooks")
+}
+
 model FeeStructure {
   id           String @id @default(cuid())
   departmentId String
   semester     Int
-  tuitionFee   Int
-  libraryFee   Int
-  labFee       Int
-  otherFee     Int
-  totalFee     Int
+  tuitionFee   Decimal @db.Decimal(10,2)
+  libraryFee   Decimal @db.Decimal(10,2)
+  labFee       Decimal @db.Decimal(10,2)
+  examFee      Decimal @db.Decimal(10,2)
+  otherFee     Decimal @db.Decimal(10,2)
+  totalFee     Decimal @db.Decimal(10,2)
+  lateFee      Decimal @db.Decimal(10,2) @default(0)
+  dueDate      DateTime
   year         Int
+  isActive     Boolean @default(true)
+  
+  department   Department @relation(fields: [departmentId], references: [id])
+  invoices     FeeInvoice[]
   
   @@unique([departmentId, semester, year])
   @@map("fee_structures")
 }
 
+model FeeInvoice {
+  id               String   @id @default(cuid())
+  invoiceNumber    String   @unique
+  studentId        String
+  feeStructureId   String
+  amount           Decimal  @db.Decimal(10,2)
+  lateFee          Decimal  @db.Decimal(10,2) @default(0)
+  discount         Decimal  @db.Decimal(10,2) @default(0)
+  totalAmount      Decimal  @db.Decimal(10,2)
+  status           InvoiceStatus @default(PENDING)
+  dueDate          DateTime
+  issuedAt         DateTime @default(now())
+  paidAt           DateTime?
+  
+  student          Student      @relation(fields: [studentId], references: [id])
+  feeStructure     FeeStructure @relation(fields: [feeStructureId], references: [id])
+  payments         FeePayment[]
+  reminders        PaymentReminder[]
+  
+  @@map("fee_invoices")
+}
+
 model FeePayment {
   id            String      @id @default(cuid())
-  studentId     String
-  amount        Int
-  paymentMethod PaymentMethod
+  invoiceId     String
   transactionId String?
-  status        PaymentStatus
-  semester      Int
-  year          Int
+  amount        Decimal     @db.Decimal(10,2)
+  paymentMethod PaymentMethodType
+  status        PaymentStatus @default(PENDING)
+  receiptNumber String?     @unique
+  notes         String?
   createdAt     DateTime    @default(now())
   
-  student Student @relation(fields: [studentId], references: [id])
+  invoice       FeeInvoice           @relation(fields: [invoiceId], references: [id])
+  transaction   PaymentTransaction?  @relation(fields: [transactionId], references: [id])
   
   @@map("fee_payments")
 }
 
-// Enums
+model PaymentReminder {
+  id        String   @id @default(cuid())
+  studentId String
+  invoiceId String
+  type      ReminderType @default(EMAIL)
+  sentAt    DateTime @default(now())
+  
+  student   Student    @relation(fields: [studentId], references: [id])
+  invoice   FeeInvoice @relation(fields: [invoiceId], references: [id])
+  
+  @@map("payment_reminders")
+}
+
+// ===== ENUMS =====
 enum Role {
   ADMIN
   FACULTY
@@ -266,11 +927,171 @@ enum ExamType {
   ASSIGNMENT
 }
 
-enum PaymentMethod {
-  CASH
+enum RoomType {
+  CLASSROOM
+  LABORATORY
+  AUDITORIUM
+  SEMINAR_HALL
+  LIBRARY
+  SPORTS
+}
+
+enum DocumentType {
+  ID_CARD
+  TRANSCRIPT
+  CERTIFICATE
+  FEE_RECEIPT
+  ASSIGNMENT
+  STUDY_MATERIAL
+  SYLLABUS
+  TIMETABLE
+  CIRCULAR
+  POLICY_DOCUMENT
+  APPLICATION_FORM
+  OTHER
+}
+
+enum CertificateType {
+  DEGREE
+  DIPLOMA
+  COURSE_COMPLETION
+  PARTICIPATION
+  ACHIEVEMENT
+  CHARACTER
+  BONAFIDE
+  MIGRATION
+  PROVISIONAL
+}
+
+enum QuestionType {
+  MULTIPLE_CHOICE
+  TRUE_FALSE
+  SHORT_ANSWER
+  ESSAY
+  FILL_IN_BLANK
+}
+
+enum DifficultyLevel {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum ExamSubmissionStatus {
+  IN_PROGRESS
+  COMPLETED
+  AUTO_SUBMITTED
+  UNDER_REVIEW
+  GRADED
+}
+
+enum LessonType {
+  VIDEO
+  DOCUMENT
+  SLIDE
+  QUIZ
+  INTERACTIVE
+}
+
+enum AssignmentSubmissionStatus {
+  SUBMITTED
+  GRADED
+  RETURNED
+  LATE
+}
+
+enum ConversationType {
+  DIRECT     // 1-on-1 conversation
+  GROUP      // Group conversation
+  BROADCAST  // Admin announcements
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  AUDIO
+  VIDEO
+  SYSTEM    // System-generated messages
+}
+
+enum ParticipantRole {
+  ADMIN
+  MODERATOR
+  MEMBER
+}
+
+enum UserStatus {
+  AVAILABLE
+  BUSY
+  AWAY
+  DO_NOT_DISTURB
+  INVISIBLE
+}
+
+enum ReportType {
+  TRANSCRIPT
+  CERTIFICATE
+  ATTENDANCE_REPORT
+  GRADE_REPORT
+  FINANCIAL_REPORT
+  ANALYTICS_REPORT
+  STUDENT_LIST
+  FACULTY_REPORT
+  DEPARTMENT_REPORT
+  CUSTOM
+}
+
+enum ReportCategory {
+  ACADEMIC
+  ADMINISTRATIVE
+  FINANCIAL
+  ANALYTICS
+  CERTIFICATES
+  COMPLIANCE
+}
+
+enum ReportStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ScheduleFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+enum PaymentMethodType {
   CARD
   UPI
   NET_BANKING
+  WALLET
+  BANK_TRANSFER
+  CASH
+  CHEQUE
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+  CANCELLED
+  REFUNDED
+  PARTIAL_REFUND
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
+  PARTIAL
 }
 
 enum PaymentStatus {
@@ -278,4 +1099,11 @@ enum PaymentStatus {
   COMPLETED
   FAILED
   REFUNDED
+}
+
+enum ReminderType {
+  EMAIL
+  SMS
+  PUSH_NOTIFICATION
+  IN_APP
 }
